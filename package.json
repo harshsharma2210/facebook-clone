@@ -4,7 +4,16 @@
   "description": "MERN STACK FACEBOOK CLONE",
   "main": "server.js",
   "dependencies": {
-    "dotenv": "^8.2.0"
+    "body-parser": "^1.19.0",
+    "cors": "^2.8.5",
+    "dotenv": "^8.2.0",
+    "express": "^4.17.1",
+    "gridfs-stream": "^1.1.1",
+    "mongoose": "^5.11.18",
+    "multer": "^1.4.2",
+    "multer-gridfs-storage": "^4.2.0",
+    "path": "^0.12.7",
+    "pusher": "^5.0.0"
   },
   "devDependencies": {},
   "scripts": {
