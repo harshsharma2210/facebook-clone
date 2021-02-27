@@ -1,110 +1,100 @@
 require("dotenv").config();
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const multer = require('multer');
-const GridFsStorage = require('multer-gridfs-storage');
-const Grid = require('gridfs-stream');
-const bodyParser = require('body-parser');
-const path = require('path');
-const Pusher = require('pusher');
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const path = require("path");
+const Pusher = require("pusher");
 
-const mongoPosts = require('./postModel');
-
-Grid.mongo = mongoose.mongo;
+const mongoPosts = require("./postModel");
 
 // APP CONFIG
 const app = express();
 const port = process.env.PORT;
 
+const pusher = new Pusher({
+  appId: process.env.appId,
+  key: process.env.key,
+  secret: process.env.secret,
+  cluster: "ap2",
+  useTLS: true
+});
 
 // MIDDLEWARES
-app.use(bodyParser.json({ limit: "50mb" }));
+app.use(express.json());
 app.use(cors());
 
 // DB CONFIG
 const mongoURI = process.env.DB;
-const conn = mongoose.createConnection(mongoURI, {
-    useCreateIndex: true,
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-});
-
-let gfs;
-
-conn.once('open', () => {
-    console.log("Database Connected");
-    gfs = Grid(conn.db, mongoose.mongo);
-    gfs.collection('images');
+mongoose.connect(mongoURI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  useFindAndModify: false,
 })
+  .then(() => {
+    console.log("Connected to MongoDB");
+    const changeStream = mongoose.connection.collection('posts').watch();
+    changeStream.on('change', (change) => {
+      if (change.operationType === 'insert') {
+        console.log("Triggering pusher");
+        pusher.trigger('posts', 'inserted', {
+          change: change
 
-const storage = new GridFsStorage({
-    url: mongoURI,
-    file: (req, file) => {
-        return new Promise((resolve, reject) => {
-            const filename = `image-${Date.now()}${path.extname(file.originalname)}`;
-            const fileInfo = {
-                filename: filename,
-                bucketName: 'images'
-            };
-            resolve(fileInfo);
-        });
-    }
-});
+        })
+      }
+      else {
+        console.log("Error Triggering pusher");
+      }
+    })
 
-const upload = multer({ storage });
+  })
+  .catch(err => {
+    console.log(err);
+  })
 
 
 // API ROUTES
-app.get('/', (req, res) => {
-    res.status(200).send("Hello World");
+app.get("/", (req, res) => {
+  res.status(200).send("Hello World");
 });
 
-app.post('/upload/image', upload.single('file'), (req, res) => {
-    res.status(201).send(req.file);
-});
-
-app.post('/upload/post', (req, res) => {
-    const dbPost = req.body;
-
-    mongoPosts.create(dbPost, (err, data) => {
-        if (err)
-            res.status(500).send(err);
-        else
-            res.status(201).send(data);
+app.post("/upload/post", (req, res) => {
+  const { user, imgName, text, avatar, timestamp } = req.body;
+  const post = new mongoPosts({
+    user,
+    imgName,
+    text,
+    avatar,
+    timestamp
+  });
+  post
+    .save()
+    .then((result) => {
+      res.json({ post: result });
     })
+    .catch((err) => {
+      console.log(err);
+    });
 });
 
-app.get('/retrieve/posts', (req, res) => {
-    mongoPosts.find((err, data) => {
-        if (err)
-            res.status(500).send(err);
-        else {
-            data.sort((b, a) => {
-                return a.timestamp - b.timestamp;
-            });
-        }
-        res.status(200).send(data);
-
+app.get("/retrieve/posts", (req, res) => {
+  mongoPosts
+    .find()
+    .sort("-timestamp")
+    .then((posts) => {
+      res.json({ posts });
     })
+    .catch((err) => {
+      console.log(err);
+    });
 });
 
-app.get('/retrieve/images/single', (req, res) => {
-    gfs.files.findOne({ filename: req.query.name }, (err, file) => {
-        if (err)
-            res.status(500).send(err);
-        else {
-            if (!file || file.length === 0) {
-                res.status(404).json({ err: 'file not found' });
-            }
-            else {
-                const readstream = gfs.createReadStream(file.filename);
-                readstream.pipe(res);
-            }
-        }
-    })
-});
-
+if (process.env.NODE_ENV == "production") {
+  app.use(express.static("client/build"));
+  const path = require("path");
+  app.get("*", (req, res) => {
+    res.sendFile(path.resolve(__dirname, "client", "build", "index.html"));
+  });
+}
 
 // LISTEN
 app.listen(port, () => console.log(`Listening on localhost:${port}`));
